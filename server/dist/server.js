@@ -18,7 +18,7 @@ const pagination = z.object({
     category: z.string().trim().max(100).optional(),
     location: z.string().trim().max(100).optional(),
     riskLevel: z.nativeEnum(RiskLevel).optional(),
-    sortBy: z.enum(['name', 'score', 'riskScore', 'onTimeRate', 'qualityRating', 'createdAt']).default('createdAt'),
+    sortBy: z.enum(['name', 'riskScore', 'onTimeRate', 'qualityRating', 'createdAt']).default('createdAt'),
     sortOrder: z.enum(['asc', 'desc']).default('desc'),
 });
 const supplierInput = z.object({
@@ -37,8 +37,25 @@ const supplierInput = z.object({
 });
 const authInput = z.object({ email: z.string().email(), password: z.string().min(8).max(128) });
 const registerInput = authInput.extend({ name: z.string().trim().min(2).max(100), confirmPassword: z.string().min(8).max(128) }).refine((value) => value.password === value.confirmPassword, { path: ['confirmPassword'], message: 'Passwords do not match' });
+const tcoInput = z.object({
+    product: z.number().nonnegative(), transportation: z.number().nonnegative().default(0), taxes: z.number().nonnegative().default(0),
+    storage: z.number().nonnegative().default(0), inspection: z.number().nonnegative().default(0), expectedDefect: z.number().nonnegative().default(0),
+    delay: z.number().nonnegative().default(0), other: z.number().nonnegative().default(0), supplierId: z.string().optional(), productName: z.string().trim().max(150).optional(),
+});
+const orderInput = z.object({
+    supplierId: z.string().min(1), reference: z.string().trim().min(2).max(80), status: z.enum(['DRAFT', 'PENDING', 'APPROVED', 'ORDERED', 'IN_TRANSIT', 'DELIVERED', 'CANCELLED']).default('PENDING'),
+    items: z.array(z.object({ product: z.string().trim().min(1).max(150), quantity: z.number().int().positive(), unitPrice: z.number().nonnegative() })).min(1),
+});
 app.use(helmet());
-app.use(cors({ origin: env.CLIENT_ORIGIN, credentials: true }));
+const allowedOrigins = new Set([env.CLIENT_ORIGIN]);
+app.use(cors({
+    origin: (origin, callback) => {
+        const developmentOrigin = env.NODE_ENV === 'development' && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin ?? '');
+        const isAllowed = !origin || allowedOrigins.has(origin) || developmentOrigin;
+        callback(null, isAllowed);
+    },
+    credentials: true,
+}));
 app.use(express.json({ limit: '100kb' }));
 app.use(cookieParser());
 app.use(rateLimit({ windowMs: 15 * 60 * 1000, limit: 300, standardHeaders: 'draft-8', legacyHeaders: false }));
@@ -84,8 +101,11 @@ app.post('/api/auth/register', async (req, res, next) => {
         const existing = await prisma.user.findUnique({ where: { email: input.email.toLowerCase() } });
         if (existing)
             return res.status(409).json({ error: 'Email is already registered' });
-        const workspace = await prisma.workspace.create({ data: { name: `${input.name}'s Workspace` } });
-        const user = await prisma.user.create({ data: { name: input.name, email: input.email.toLowerCase(), password: await bcrypt.hash(input.password, 12), role: Role.MANAGER, workspaceId: workspace.id } });
+        const { workspace, user } = await prisma.$transaction(async (transaction) => {
+            const workspace = await transaction.workspace.create({ data: { name: `${input.name}'s Workspace` } });
+            const user = await transaction.user.create({ data: { name: input.name, email: input.email.toLowerCase(), password: await bcrypt.hash(input.password, 12), role: Role.MANAGER, workspaceId: workspace.id } });
+            return { workspace, user };
+        });
         setAuthCookie(res, signToken(user));
         return res.status(201).json({ user: publicUser(user) });
     }
@@ -119,13 +139,14 @@ app.get('/api/auth/me', requireAuth, async (req, res, next) => {
 app.get('/api/dashboard', requireAuth, async (req, res, next) => {
     try {
         const where = { workspaceId: req.user.workspaceId };
-        const [total, highRisk, mediumRisk, lowRisk, aggregate, suppliers] = await Promise.all([
+        const [total, highRisk, mediumRisk, lowRisk, aggregate, spend, suppliers] = await Promise.all([
             prisma.supplier.count({ where }), prisma.supplier.count({ where: { ...where, riskLevel: RiskLevel.HIGH } }),
             prisma.supplier.count({ where: { ...where, riskLevel: RiskLevel.MEDIUM } }), prisma.supplier.count({ where: { ...where, riskLevel: RiskLevel.LOW } }),
             prisma.supplier.aggregate({ where, _avg: { onTimeRate: true, qualityRating: true, riskScore: true } }),
+            prisma.procurementOrder.aggregate({ where: { supplier: { workspaceId: req.user.workspaceId } }, _sum: { totalAmount: true } }),
             prisma.supplier.findMany({ where, orderBy: { updatedAt: 'desc' }, take: 10 }),
         ]);
-        return res.json({ metrics: { totalSuppliers: total, highRiskSuppliers: highRisk, averagePerformance: Number((((aggregate._avg.onTimeRate ?? 0) + (aggregate._avg.qualityRating ?? 0)) / 2).toFixed(1)), procurementSpend: 0 }, riskDistribution: { low: lowRisk, medium: mediumRisk, high: highRisk }, suppliers });
+        return res.json({ metrics: { totalSuppliers: total, highRiskSuppliers: highRisk, averagePerformance: Number((((aggregate._avg.onTimeRate ?? 0) + (aggregate._avg.qualityRating ?? 0)) / 2).toFixed(1)), procurementSpend: spend._sum.totalAmount ?? 0 }, riskDistribution: { low: lowRisk, medium: mediumRisk, high: highRisk }, suppliers });
     }
     catch (error) {
         return next(error);
@@ -185,8 +206,87 @@ app.delete('/api/suppliers/:id', requireAuth, requireRole(Role.ADMIN, Role.MANAG
 });
 app.post('/api/tco/calculate', requireAuth, (req, res, next) => {
     try {
-        const input = z.object({ product: z.number().nonnegative(), transportation: z.number().nonnegative().default(0), taxes: z.number().nonnegative().default(0), storage: z.number().nonnegative().default(0), inspection: z.number().nonnegative().default(0), expectedDefect: z.number().nonnegative().default(0), delay: z.number().nonnegative().default(0), other: z.number().nonnegative().default(0) }).parse(req.body);
-        return res.json({ ...input, total: Object.values(input).reduce((sum, value) => sum + value, 0) });
+        const input = tcoInput.parse(req.body);
+        const total = input.product + input.transportation + input.taxes + input.storage + input.inspection + input.expectedDefect + input.delay + input.other;
+        return res.json({ ...input, total });
+    }
+    catch (error) {
+        return next(error);
+    }
+});
+app.post('/api/tco', requireAuth, async (req, res, next) => {
+    try {
+        const input = tcoInput.parse(req.body);
+        if (input.supplierId) {
+            const supplier = await prisma.supplier.findFirst({ where: { id: input.supplierId, workspaceId: req.user.workspaceId } });
+            if (!supplier)
+                return res.status(404).json({ error: 'Supplier not found' });
+        }
+        const total = input.product + input.transportation + input.taxes + input.storage + input.inspection + input.expectedDefect + input.delay + input.other;
+        const calculation = await prisma.costBreakdown.create({ data: { workspaceId: req.user.workspaceId, supplierId: input.supplierId, product: input.productName, productCost: input.product, transportation: input.transportation, taxes: input.taxes, storage: input.storage, inspection: input.inspection, expectedDefect: input.expectedDefect, delay: input.delay, other: input.other, total } });
+        return res.status(201).json(calculation);
+    }
+    catch (error) {
+        return next(error);
+    }
+});
+app.get('/api/tco', requireAuth, async (req, res, next) => {
+    try {
+        const items = await prisma.costBreakdown.findMany({ where: { workspaceId: req.user.workspaceId, ...(typeof req.query.supplierId === 'string' ? { supplierId: req.query.supplierId } : {}) }, orderBy: { createdAt: 'desc' }, take: 100 });
+        return res.json(items);
+    }
+    catch (error) {
+        return next(error);
+    }
+});
+app.get('/api/tco/:id', requireAuth, async (req, res, next) => {
+    try {
+        const item = await prisma.costBreakdown.findFirst({ where: { id: req.params.id, workspaceId: req.user.workspaceId } });
+        return item ? res.json(item) : res.status(404).json({ error: 'TCO calculation not found' });
+    }
+    catch (error) {
+        return next(error);
+    }
+});
+app.delete('/api/tco/:id', requireAuth, async (req, res, next) => {
+    try {
+        const deleted = await prisma.costBreakdown.deleteMany({ where: { id: req.params.id, workspaceId: req.user.workspaceId } });
+        return deleted.count ? res.status(204).send() : res.status(404).json({ error: 'TCO calculation not found' });
+    }
+    catch (error) {
+        return next(error);
+    }
+});
+app.get('/api/procurement-orders', requireAuth, async (req, res, next) => {
+    try {
+        const orders = await prisma.procurementOrder.findMany({ where: { supplier: { workspaceId: req.user.workspaceId }, ...(typeof req.query.status === 'string' ? { status: req.query.status } : {}) }, include: { supplier: true, items: true, costBreakdown: true }, orderBy: { orderedAt: 'desc' }, take: 100 });
+        return res.json(orders);
+    }
+    catch (error) {
+        return next(error);
+    }
+});
+app.post('/api/procurement-orders', requireAuth, requireRole(Role.ADMIN, Role.MANAGER), async (req, res, next) => {
+    try {
+        const input = orderInput.parse(req.body);
+        const supplier = await prisma.supplier.findFirst({ where: { id: input.supplierId, workspaceId: req.user.workspaceId } });
+        if (!supplier)
+            return res.status(404).json({ error: 'Supplier not found' });
+        const totalAmount = input.items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
+        const order = await prisma.procurementOrder.create({ data: { supplierId: supplier.id, reference: input.reference, status: input.status, totalAmount, items: { create: input.items.map((item) => ({ ...item, subtotal: item.quantity * item.unitPrice })) } }, include: { supplier: true, items: true } });
+        return res.status(201).json(order);
+    }
+    catch (error) {
+        return next(error);
+    }
+});
+app.patch('/api/procurement-orders/:id/status', requireAuth, requireRole(Role.ADMIN, Role.MANAGER), async (req, res, next) => {
+    try {
+        const status = z.object({ status: z.enum(['DRAFT', 'PENDING', 'APPROVED', 'ORDERED', 'IN_TRANSIT', 'DELIVERED', 'CANCELLED']) }).parse(req.body).status;
+        const existing = await prisma.procurementOrder.findFirst({ where: { id: req.params.id, supplier: { workspaceId: req.user.workspaceId } } });
+        if (!existing)
+            return res.status(404).json({ error: 'Order not found' });
+        return res.json(await prisma.procurementOrder.update({ where: { id: existing.id }, data: { status }, include: { supplier: true, items: true } }));
     }
     catch (error) {
         return next(error);

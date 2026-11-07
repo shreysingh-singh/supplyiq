@@ -48,3 +48,10 @@ npm run db:seed
 Demo account: `rohan@northstar.example` / `demo1234`.
 
 The client uses `VITE_API_URL` when provided; otherwise it defaults to `http://localhost:4000/api`.
+
+### Runtime security notes
+
+- In development, CORS permits only `localhost` and `127.0.0.1` origins with any port.
+- In production, set `CLIENT_ORIGIN` to the exact HTTPS frontend origin; other origins are rejected.
+- `procurementSpend` is calculated from persisted procurement orders and is scoped to the authenticated workspace.
+- The server checks the current database user on each authenticated request, so deleted users and changed roles cannot continue using an old token.

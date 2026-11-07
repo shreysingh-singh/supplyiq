@@ -151,32 +151,51 @@ model SupplierReview {
 }
 
 model ProcurementOrder {
-  id            String         @id @default(cuid())
+  id            String                 @id @default(cuid())
   supplierId    String
-  supplier      Supplier       @relation(fields: [supplierId], references: [id], onDelete: Cascade)
-  reference     String         @unique
+  supplier      Supplier               @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  reference     String                 @unique
   totalAmount   Float
-  status        String         @default("PENDING")
-  orderedAt     DateTime       @default(now())
+  status        String                 @default("PENDING")
+  orderedAt     DateTime               @default(now())
   costBreakdown CostBreakdown?
+  items         ProcurementOrderItem[]
 
   @@index([supplierId, orderedAt])
 }
 
+model ProcurementOrderItem {
+  id        String           @id @default(cuid())
+  orderId   String
+  order     ProcurementOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product   String
+  quantity  Int
+  unitPrice Float
+  subtotal  Float
+
+  @@index([orderId])
+}
+
 model CostBreakdown {
-  id             String           @id @default(cuid())
-  orderId        String           @unique
-  order          ProcurementOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  id             String            @id @default(cuid())
+  orderId        String?           @unique
+  order          ProcurementOrder? @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  workspaceId    String
+  supplierId     String?
+  product        String?
   productCost    Float
-  transportation Float            @default(0)
-  taxes          Float            @default(0)
-  storage        Float            @default(0)
-  inspection     Float            @default(0)
-  expectedDefect Float            @default(0)
-  delay          Float            @default(0)
-  other          Float            @default(0)
+  transportation Float             @default(0)
+  taxes          Float             @default(0)
+  storage        Float             @default(0)
+  inspection     Float             @default(0)
+  expectedDefect Float             @default(0)
+  delay          Float             @default(0)
+  other          Float             @default(0)
   total          Float
-  createdAt      DateTime         @default(now())
+  createdAt      DateTime          @default(now())
+
+  @@index([workspaceId, createdAt])
+  @@index([supplierId])
 }
 
 model AIRecommendation {

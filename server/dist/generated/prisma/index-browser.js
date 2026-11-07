@@ -221,9 +221,21 @@ exports.Prisma.ProcurementOrderScalarFieldEnum = {
   orderedAt: 'orderedAt'
 };
 
+exports.Prisma.ProcurementOrderItemScalarFieldEnum = {
+  id: 'id',
+  orderId: 'orderId',
+  product: 'product',
+  quantity: 'quantity',
+  unitPrice: 'unitPrice',
+  subtotal: 'subtotal'
+};
+
 exports.Prisma.CostBreakdownScalarFieldEnum = {
   id: 'id',
   orderId: 'orderId',
+  workspaceId: 'workspaceId',
+  supplierId: 'supplierId',
+  product: 'product',
   productCost: 'productCost',
   transportation: 'transportation',
   taxes: 'taxes',
@@ -299,6 +311,7 @@ exports.Prisma.ModelName = {
   SupplierProduct: 'SupplierProduct',
   SupplierReview: 'SupplierReview',
   ProcurementOrder: 'ProcurementOrder',
+  ProcurementOrderItem: 'ProcurementOrderItem',
   CostBreakdown: 'CostBreakdown',
   AIRecommendation: 'AIRecommendation',
   RiskAssessment: 'RiskAssessment'
