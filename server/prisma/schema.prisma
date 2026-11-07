@@ -1,0 +1,196 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  ADMIN
+  MANAGER
+  ANALYST
+}
+
+enum RiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum QuotationStatus {
+  PENDING
+  REVIEWED
+  ACCEPTED
+  REJECTED
+}
+
+model Workspace {
+  id        String     @id @default(cuid())
+  name      String
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  users     User[]
+  suppliers Supplier[]
+  @@index([name])
+}
+
+model User {
+  id          String    @id @default(cuid())
+  name        String
+  email       String    @unique
+  password    String
+  role        Role      @default(ANALYST)
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  suppliers   Supplier[]
+  @@index([workspaceId])
+}
+
+model Supplier {
+  id                 String                @id @default(cuid())
+  name               String
+  companyName        String
+  email              String
+  phone              String?
+  location           String
+  industry           String
+  categories         String
+  averageDeliveryDays Float
+  onTimeRate         Float
+  qualityRating      Float
+  priceConsistency   Float
+  riskScore          Int                 @default(0)
+  riskLevel          RiskLevel           @default(LOW)
+  certifications     String?
+  ownerId            String
+  workspaceId        String
+  owner              User                @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  workspace          Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  performances       SupplierPerformance[]
+  quotations         Quotation[]
+  assessments        RiskAssessment[]
+  products           SupplierProduct[]
+  reviews            SupplierReview[]
+  orders             ProcurementOrder[]
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  @@index([ownerId])
+  @@index([workspaceId])
+  @@index([riskLevel])
+}
+
+model SupplierPerformance {
+  id              String   @id @default(cuid())
+  supplierId      String
+  supplier        Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  period          String
+  onTimeRate      Float
+  defectRate      Float
+  averageDelivery Float
+  orderCompletion Float
+  priceConsistency Float
+  createdAt       DateTime @default(now())
+  @@index([supplierId, createdAt])
+}
+
+model Quotation {
+  id           String         @id @default(cuid())
+  supplierId   String
+  supplier     Supplier       @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  reference    String
+  status       QuotationStatus @default(PENDING)
+  deliveryDays Float?
+  taxes        Float           @default(0)
+  shipping     Float           @default(0)
+  paymentTerms String?
+  items        QuotationItem[]
+  createdAt    DateTime       @default(now())
+}
+
+model QuotationItem {
+  id          String    @id @default(cuid())
+  quotationId String
+  quotation   Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  product     String
+  quantity    Int
+  unitPrice   Float
+  warranty    String?
+}
+
+model SupplierProduct {
+  id          String   @id @default(cuid())
+  supplierId  String
+  supplier    Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  name        String
+  category    String
+  unitPrice   Float
+  currency    String   @default("USD")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  @@index([supplierId])
+}
+
+model SupplierReview {
+  id         String   @id @default(cuid())
+  supplierId String
+  supplier   Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  rating     Float
+  comment    String?
+  createdAt  DateTime @default(now())
+  @@index([supplierId, createdAt])
+}
+
+model ProcurementOrder {
+  id          String   @id @default(cuid())
+  supplierId  String
+  supplier    Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  reference   String   @unique
+  totalAmount Float
+  status      String   @default("PENDING")
+  orderedAt   DateTime @default(now())
+  costBreakdown CostBreakdown?
+  @@index([supplierId, orderedAt])
+}
+
+model CostBreakdown {
+  id              String            @id @default(cuid())
+  orderId         String            @unique
+  order           ProcurementOrder  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productCost     Float
+  transportation  Float             @default(0)
+  taxes           Float             @default(0)
+  storage         Float             @default(0)
+  inspection      Float             @default(0)
+  expectedDefect  Float             @default(0)
+  delay           Float             @default(0)
+  other           Float             @default(0)
+  total           Float
+  createdAt       DateTime          @default(now())
+}
+
+model AIRecommendation {
+  id          String   @id @default(cuid())
+  workspaceId String
+  supplierId  String?
+  prompt      String
+  response    String
+  createdAt   DateTime @default(now())
+  @@index([workspaceId, createdAt])
+}
+
+model RiskAssessment {
+  id          String   @id @default(cuid())
+  supplierId  String
+  supplier    Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  score       Int
+  classification RiskLevel
+  explanation String
+  indicators  String
+  simulated   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  @@index([supplierId, createdAt])
+}

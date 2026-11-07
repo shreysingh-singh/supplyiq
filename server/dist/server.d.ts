@@ -1,0 +1,13 @@
+import { Role } from './generated/prisma/index.js';
+declare global {
+    namespace Express {
+        interface Request {
+            user?: {
+                id: string;
+                role: Role;
+                workspaceId: string;
+            };
+        }
+    }
+}
+//# sourceMappingURL=server.d.ts.map
